@@ -17,4 +17,5 @@ void SetBackground(bool on);
 // Re-checks the taskbar layout and moves the widget if needed; call about once a second.
 // Returns false when the taskbar it was attached to is gone.
 bool Reposition();
+RECT ScreenRect();
 }  // namespace widget

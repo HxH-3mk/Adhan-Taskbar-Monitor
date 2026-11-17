@@ -635,6 +635,38 @@ CountdownState ComputeCountdown(const LocationConfig& loc, const MethodConfig& m
     return st;
 }
 
+TodaySchedule GetTodaySchedule(const LocationConfig& loc, const MethodConfig& mc,
+                               const ManualAdhanConfig& ma, const IqamahConfig& iq,
+                               AppLang lang, bool use12h) {
+    bool en = (lang == AppLang::English);
+    SYSTEMTIME nowSt{};
+    GetLocalTime(&nowSt);
+    double tz = LocalTimezoneHours();
+    DayPrayerTimes today = CalculateDay(nowSt.wYear, nowSt.wMonth, nowSt.wDay, loc.latitude, loc.longitude, tz, mc, ma);
+    CountdownState st = ComputeCountdown(loc, mc, ma, iq, lang, use12h);
+
+    TodaySchedule out;
+    out.locationDisplay = (en && loc.name == L"ينبع الصناعية") ? L"Yanbu Industrial City" : loc.name;
+    if (ma.useManual) out.locationDisplay += en ? L" (Manual)" : L" (يدوي)";
+
+    if (en) {
+        out.statusLine = (st.isIqamah ? L"Iqamah (" : L"Next: ") + st.prayerName + (st.isIqamah ? L"): " : L" in ") + st.timeText;
+    } else {
+        out.statusLine = (st.isIqamah ? L"الإقامة (" : L"القادم: ") + st.prayerName + (st.isIqamah ? L"): \u200E" : L" خلال \u200E") + st.timeText;
+    }
+
+    auto addRow = [&](const wchar_t* name, double hrs, bool isNext) {
+        out.rows.push_back({ name, FormatClock(hrs, use12h, lang), isNext });
+    };
+    addRow(PrayerName(PrayerId::Fajr, lang),    today.adhanHours[0], st.prayer == PrayerId::Fajr);
+    addRow(en ? L"Sunrise" : L"الشروق",         today.sunriseHours,  false);
+    addRow(PrayerName(PrayerId::Dhuhr, lang),   today.adhanHours[1], st.prayer == PrayerId::Dhuhr);
+    addRow(PrayerName(PrayerId::Asr, lang),     today.adhanHours[2], st.prayer == PrayerId::Asr);
+    addRow(PrayerName(PrayerId::Maghrib, lang), today.adhanHours[3], st.prayer == PrayerId::Maghrib);
+    addRow(PrayerName(PrayerId::Isha, lang),    today.adhanHours[4], st.prayer == PrayerId::Isha);
+    return out;
+}
+
 std::vector<LocationConfig> SearchCitiesOnline(const std::wstring& query, AppLang lang) {
     std::vector<LocationConfig> results;
     if (query.empty()) return results;

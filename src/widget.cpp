@@ -372,6 +372,12 @@ void Destroy() {
 
 bool Alive() { return g_wnd && IsWindow(g_wnd) && g_taskbar && IsWindow(g_taskbar); }
 
+RECT ScreenRect() {
+    RECT r{};
+    if (Alive()) GetWindowRect(g_wnd, &r);
+    return r;
+}
+
 void SetDisplay(wchar_t iconGlyph, const std::wstring& label, const std::wstring& timeText, bool accent, int redBoxAlpha, const std::wstring& tooltip) {
     bool visualChanged = (iconGlyph != g_iconGlyph || label != g_label || timeText != g_timeText ||
                           accent != g_accent || redBoxAlpha != g_redBoxAlpha);

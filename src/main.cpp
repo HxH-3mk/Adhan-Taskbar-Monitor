@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <dwmapi.h>
 #include <string>
 
 #include "prayer.h"
@@ -25,6 +26,7 @@ enum MenuId : UINT {
 
 const wchar_t* kAppName = L"Adhan Taskbar Monitor";
 const wchar_t* kWndClass = L"AdhanTaskbarWnd";
+const wchar_t* kPopupClass = L"AdhanSchedulePopup";
 const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const wchar_t* kRunValue = L"AdhanTaskbarMonitor";
 const wchar_t* kSettingsKey = L"Software\\AdhanTaskbarMonitor";
@@ -34,8 +36,10 @@ constexpr wchar_t kIconIqamah = 0xE916;
 
 HINSTANCE g_inst = nullptr;
 HWND g_hwnd = nullptr;
+HWND g_popup = nullptr;
 UINT g_taskbarCreatedMsg = 0;
 bool g_lightTaskbar = false;
+bool g_lightApps = false;
 bool g_widgetBackground = false;
 bool g_dialogOpen = false;
 
@@ -46,12 +50,17 @@ IqamahConfig g_iq;
 AppLang g_lang = AppLang::Arabic;
 bool g_use12Hour = true;
 
-bool ReadLightTaskbar() {
-    DWORD v = 0, sz = sizeof(v);
+bool ReadPersonalizeBool(const wchar_t* valueName, bool defaultVal) {
+    DWORD v = defaultVal ? 1 : 0, sz = sizeof(v);
     if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                     L"SystemUsesLightTheme", RRF_RT_REG_DWORD, nullptr, &v, &sz) == ERROR_SUCCESS)
+                     valueName, RRF_RT_REG_DWORD, nullptr, &v, &sz) == ERROR_SUCCESS) {
         return v != 0;
-    return false;
+    }
+    return defaultVal;
+}
+
+bool ReadLightTaskbar() {
+    return ReadPersonalizeBool(L"SystemUsesLightTheme", false);
 }
 
 void ApplyMenuTheme(bool light) {
@@ -121,7 +130,194 @@ void UpdateDisplay() {
     }
 }
 
+// ---- Schedule Popup (on Left-Click) -----------------------------------------------------------
+
+struct SchedulePopupState {
+    TodaySchedule sched;
+    bool light = false;
+    bool en = false;
+    HFONT fontTitle = nullptr;
+    HFONT fontSub = nullptr;
+    HFONT fontRow = nullptr;
+    HFONT fontBold = nullptr;
+};
+
+LRESULT CALLBACK SchedulePopupProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    auto* st = reinterpret_cast<SchedulePopupState*>(GetWindowLongPtrW(h, GWLP_USERDATA));
+    switch (msg) {
+        case WM_NCCREATE: {
+            auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
+            SetWindowLongPtrW(h, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
+            return TRUE;
+        }
+        case WM_ACTIVATE:
+            if (LOWORD(wp) == WA_INACTIVE) DestroyWindow(h);
+            return 0;
+        case WM_KEYDOWN:
+            if (wp == VK_ESCAPE) { DestroyWindow(h); return 0; }
+            break;
+        case WM_PAINT: {
+            if (!st) break;
+            PAINTSTRUCT ps{};
+            HDC hdc = BeginPaint(h, &ps);
+            RECT rc{};
+            GetClientRect(h, &rc);
+
+            COLORREF bg = st->light ? RGB(246, 246, 246) : RGB(32, 32, 32);
+            COLORREF fg = st->light ? RGB(20, 20, 20) : RGB(242, 242, 242);
+            COLORREF muted = st->light ? RGB(100, 100, 100) : RGB(170, 170, 170);
+            COLORREF accent = st->light ? RGB(0, 103, 192) : RGB(96, 205, 255);
+            COLORREF hiBg = st->light ? RGB(228, 238, 249) : RGB(46, 56, 68);
+            COLORREF sepCol = st->light ? RGB(218, 218, 218) : RGB(56, 56, 56);
+
+            HBRUSH bgBrush = CreateSolidBrush(bg);
+            FillRect(hdc, &rc, bgBrush);
+            DeleteObject(bgBrush);
+
+            UINT dpi = GetDpiForSystem();
+            auto s = [&](int v) { return MulDiv(v, static_cast<int>(dpi ? dpi : 96), 96); };
+
+            SetBkMode(hdc, TRANSPARENT);
+            int pad = s(14);
+
+            HGDIOBJ oldF = SelectObject(hdc, st->fontTitle);
+            SetTextColor(hdc, fg);
+            RECT rTitle{ pad, s(12), rc.right - pad, s(34) };
+            DrawTextW(hdc, st->sched.locationDisplay.c_str(), -1, &rTitle,
+                      DT_SINGLELINE | DT_END_ELLIPSIS | (st->en ? DT_LEFT : DT_RIGHT | DT_RTLREADING));
+
+            SelectObject(hdc, st->fontSub);
+            SetTextColor(hdc, accent);
+            RECT rSub{ pad, s(34), rc.right - pad, s(54) };
+            DrawTextW(hdc, st->sched.statusLine.c_str(), -1, &rSub,
+                      DT_SINGLELINE | DT_END_ELLIPSIS | (st->en ? DT_LEFT : DT_RIGHT | DT_RTLREADING));
+
+            HPEN pen = CreatePen(PS_SOLID, 1, sepCol);
+            HGDIOBJ oldP = SelectObject(hdc, pen);
+            MoveToEx(hdc, pad, s(60), nullptr);
+            LineTo(hdc, rc.right - pad, s(60));
+            SelectObject(hdc, oldP);
+            DeleteObject(pen);
+
+            int y = s(68);
+            int rowH = s(28);
+            for (const auto& row : st->sched.rows) {
+                RECT rRow{ pad - s(6), y, rc.right - pad + s(6), y + rowH };
+                if (row.isNext) {
+                    HBRUSH hb = CreateSolidBrush(hiBg);
+                    FillRect(hdc, &rRow, hb);
+                    DeleteObject(hb);
+                }
+                SelectObject(hdc, row.isNext ? st->fontBold : st->fontRow);
+                SetTextColor(hdc, row.isNext ? accent : fg);
+
+                RECT rName{ pad, y, rc.right - pad, y + rowH };
+                RECT rTime{ pad, y, rc.right - pad, y + rowH };
+                if (st->en) {
+                    DrawTextW(hdc, row.name.c_str(), -1, &rName, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+                    SetTextColor(hdc, row.isNext ? accent : muted);
+                    DrawTextW(hdc, row.time.c_str(), -1, &rTime, DT_SINGLELINE | DT_VCENTER | DT_RIGHT);
+                } else {
+                    DrawTextW(hdc, row.name.c_str(), -1, &rName, DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_RTLREADING);
+                    SetTextColor(hdc, row.isNext ? accent : muted);
+                    DrawTextW(hdc, row.time.c_str(), -1, &rTime, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+                }
+                y += rowH;
+            }
+
+            SelectObject(hdc, oldF);
+            EndPaint(h, &ps);
+            return 0;
+        }
+        case WM_DESTROY:
+            if (st) {
+                if (st->fontTitle) DeleteObject(st->fontTitle);
+                if (st->fontSub) DeleteObject(st->fontSub);
+                if (st->fontRow) DeleteObject(st->fontRow);
+                if (st->fontBold) DeleteObject(st->fontBold);
+                delete st;
+                SetWindowLongPtrW(h, GWLP_USERDATA, 0);
+            }
+            g_popup = nullptr;
+            return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+void ShowSchedulePopup() {
+    if (g_popup && IsWindow(g_popup)) {
+        DestroyWindow(g_popup);
+        g_popup = nullptr;
+        return;
+    }
+
+    static bool reg = false;
+    if (!reg) {
+        WNDCLASSEXW wc{ sizeof(wc) };
+        wc.lpfnWndProc = SchedulePopupProc;
+        wc.hInstance = g_inst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.lpszClassName = kPopupClass;
+        reg = RegisterClassExW(&wc) != 0;
+    }
+
+    UINT dpi = GetDpiForSystem();
+    auto s = [&](int v) { return MulDiv(v, static_cast<int>(dpi ? dpi : 96), 96); };
+
+    auto* st = new SchedulePopupState();
+    st->sched = prayer::GetTodaySchedule(g_loc, g_mc, g_ma, g_iq, g_lang, g_use12Hour);
+    st->light = g_lightApps;
+    st->en = (g_lang == AppLang::English);
+
+    auto mkF = [&](int px, int weight) {
+        return CreateFontW(-s(px), 0, 0, 0, weight, FALSE, FALSE, FALSE,
+                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                           CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    };
+    st->fontTitle = mkF(15, FW_SEMIBOLD);
+    st->fontSub = mkF(13, FW_NORMAL);
+    st->fontRow = mkF(14, FW_NORMAL);
+    st->fontBold = mkF(14, FW_SEMIBOLD);
+
+    int W = s(245);
+    int H = s(68 + static_cast<int>(st->sched.rows.size()) * 28 + 12);
+
+    RECT wr = widget::ScreenRect();
+    POINT anchor{ (wr.left + wr.right) / 2, wr.top };
+    HMONITOR mon = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{ sizeof(mi) };
+    GetMonitorInfoW(mon, &mi);
+
+    int x = anchor.x - W / 2;
+    int y = wr.top - H - s(8);
+    if (y < mi.rcWork.top) y = wr.bottom + s(8);
+    if (x < mi.rcWork.left + s(6)) x = mi.rcWork.left + s(6);
+    if (x + W > mi.rcWork.right - s(6)) x = mi.rcWork.right - W - s(6);
+
+    g_popup = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kPopupClass, L"",
+        WS_POPUP | WS_BORDER,
+        x, y, W, H, g_hwnd, nullptr, g_inst, st);
+    if (!g_popup) {
+        DeleteObject(st->fontTitle);
+        DeleteObject(st->fontSub);
+        DeleteObject(st->fontRow);
+        DeleteObject(st->fontBold);
+        delete st;
+        return;
+    }
+
+    BOOL dark = st->light ? FALSE : TRUE;
+    DwmSetWindowAttribute(g_popup, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, &dark, sizeof(dark));
+    DWORD cornerPref = 2 /*DWMWCP_ROUND*/;
+    DwmSetWindowAttribute(g_popup, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &cornerPref, sizeof(cornerPref));
+
+    ShowWindow(g_popup, SW_SHOW);
+    SetForegroundWindow(g_popup);
+}
+
 void ShowMenu() {
+    if (g_popup && IsWindow(g_popup)) DestroyWindow(g_popup);
     if (g_dialogOpen) return;
     bool en = (g_lang == AppLang::English);
     HMENU m = CreatePopupMenu();
@@ -225,6 +421,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_WIDGET_CLICK:
             if (wp == 1) ShowMenu();
+            else if (wp == 0) ShowSchedulePopup();
             return 0;
         case WM_TIMER:
             if (wp == TIMER_TICK) UpdateDisplay();
@@ -234,6 +431,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             return TRUE;
         case WM_SETTINGCHANGE:
             if (lp && !lstrcmpW(reinterpret_cast<LPCWSTR>(lp), L"ImmersiveColorSet")) {
+                g_lightApps = ReadPersonalizeBool(L"AppsUseLightTheme", false);
                 bool light = ReadLightTaskbar();
                 if (light != g_lightTaskbar) {
                     g_lightTaskbar = light;
@@ -275,6 +473,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     }
 
     g_lightTaskbar = ReadLightTaskbar();
+    g_lightApps = ReadPersonalizeBool(L"AppsUseLightTheme", false);
     ApplyMenuTheme(g_lightTaskbar);
     g_taskbarCreatedMsg = RegisterWindowMessageW(L"TaskbarCreated");
 

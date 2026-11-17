@@ -79,6 +79,18 @@ struct CountdownState {
     std::wstring tooltipText;
 };
 
+struct ScheduleRow {
+    std::wstring name;
+    std::wstring time;
+    bool isNext = false;
+};
+
+struct TodaySchedule {
+    std::wstring locationDisplay;
+    std::wstring statusLine;
+    std::vector<ScheduleRow> rows;
+};
+
 namespace prayer {
 
 const wchar_t* PrayerName(PrayerId id, AppLang lang = AppLang::Arabic);
@@ -109,6 +121,10 @@ DayPrayerTimes CalculateDay(int year, int month, int day, double lat, double lon
 CountdownState ComputeCountdown(const LocationConfig& loc, const MethodConfig& mc,
                                 const ManualAdhanConfig& ma, const IqamahConfig& iq,
                                 AppLang lang = AppLang::Arabic, bool use12h = true);
+
+TodaySchedule GetTodaySchedule(const LocationConfig& loc, const MethodConfig& mc,
+                               const ManualAdhanConfig& ma, const IqamahConfig& iq,
+                               AppLang lang = AppLang::Arabic, bool use12h = true);
 
 std::vector<LocationConfig> SearchCitiesOnline(const std::wstring& query, AppLang lang = AppLang::Arabic);
 
