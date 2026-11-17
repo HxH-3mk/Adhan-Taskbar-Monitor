@@ -86,9 +86,39 @@ std::wstring FormatHHMM(int minutes) {
     return buf;
 }
 
-std::wstring ToLowerCopy(std::wstring s) {
-    for (wchar_t& c : s) c = towlower(c);
-    return s;
+std::wstring NormalizeForSearch(const std::wstring& in) {
+    std::wstring out;
+    out.reserve(in.size());
+    for (wchar_t c : in) {
+        if (c >= 0x064B && c <= 0x065F) continue;  // Arabic tashkeel
+        if (c == 0x0670 || c == 0x0640) continue;   // superscript alef / tatweel
+        if (c == L'أ' || c == L'إ' || c == L'آ') c = L'ا';
+        else if (c == L'ة') c = L'ه';
+        else if (c == L'ى') c = L'ي';
+        else c = towlower(c);
+        out.push_back(c);
+    }
+    return out;
+}
+
+int EditDistance(const std::wstring& a, const std::wstring& b) {
+    size_t n = a.size(), m = b.size();
+    std::vector<int> prev(m + 1), cur(m + 1);
+    for (size_t j = 0; j <= m; j++) prev[j] = static_cast<int>(j);
+    for (size_t i = 1; i <= n; i++) {
+        cur[0] = static_cast<int>(i);
+        for (size_t j = 1; j <= m; j++) {
+            int cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
+            cur[j] = std::min({ prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost });
+        }
+        std::swap(prev, cur);
+    }
+    return prev[m];
+}
+
+std::wstring CityPartOnly(const std::wstring& full) {
+    size_t dash = full.find(L" - ");
+    return (dash != std::wstring::npos) ? full.substr(0, dash) : full;
 }
 
 struct ThemeColors {
@@ -183,16 +213,45 @@ struct LocDlgState {
 void PopulateLocalFilter(LocDlgState* st, const std::wstring& filter) {
     SendMessageW(st->listCities, LB_RESETCONTENT, 0, 0);
     st->shownCities.clear();
-    std::wstring q = ToLowerCopy(filter);
+    std::wstring q = NormalizeForSearch(filter);
     bool en = (st->lang == AppLang::English);
+
+    struct ScoredCity {
+        int score;
+        std::wstring disp;
+        double lat, lon;
+    };
+    std::vector<ScoredCity> matches;
+
     for (const auto& p : prayer::Presets()) {
-        std::wstring ar = p.nameAr;
-        std::wstring enName = p.nameEn;
-        if (q.empty() || ToLowerCopy(ar).find(q) != std::wstring::npos || ToLowerCopy(enName).find(q) != std::wstring::npos) {
-            const std::wstring& disp = en ? enName : ar;
-            st->shownCities.push_back({ disp, p.latitude, p.longitude });
-            SendMessageW(st->listCities, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(disp.c_str()));
+        const std::wstring& disp = en ? std::wstring(p.nameEn) : std::wstring(p.nameAr);
+        if (q.empty()) {
+            matches.push_back({ 0, disp, p.latitude, p.longitude });
+            continue;
         }
+        std::wstring arNorm = NormalizeForSearch(p.nameAr);
+        std::wstring enNorm = NormalizeForSearch(p.nameEn);
+        if (arNorm.find(q) != std::wstring::npos || enNorm.find(q) != std::wstring::npos) {
+            matches.push_back({ 0, disp, p.latitude, p.longitude });
+            continue;
+        }
+        std::wstring arCity = NormalizeForSearch(CityPartOnly(p.nameAr));
+        std::wstring enCity = NormalizeForSearch(CityPartOnly(p.nameEn));
+        int d = std::min(EditDistance(q, arCity), EditDistance(q, enCity));
+        int maxAllowed = std::max(1, static_cast<int>(q.size()) / 3 + 1);
+        if (d <= maxAllowed) {
+            matches.push_back({ d, disp, p.latitude, p.longitude });
+        }
+    }
+
+    if (!q.empty()) {
+        std::stable_sort(matches.begin(), matches.end(), [](const ScoredCity& a, const ScoredCity& b) {
+            return a.score < b.score;
+        });
+    }
+    for (const auto& m : matches) {
+        st->shownCities.push_back({ m.disp, m.lat, m.lon });
+        SendMessageW(st->listCities, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(m.disp.c_str()));
     }
 }
 

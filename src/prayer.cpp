@@ -292,6 +292,51 @@ bool ExtractJsonStringField(const std::string& obj, const char* key, std::string
     return false;
 }
 
+bool ExtractJsonNumberField(const std::string& obj, const char* key, double& out) {
+    std::string pat = std::string("\"") + key + "\":";
+    size_t pos = obj.find(pat);
+    if (pos == std::string::npos) return false;
+    pos += pat.size();
+    while (pos < obj.size() && (obj[pos] == ' ' || obj[pos] == '"')) pos++;
+    char* end = nullptr;
+    double v = std::strtod(obj.c_str() + pos, &end);
+    if (end == obj.c_str() + pos) return false;
+    out = v;
+    return true;
+}
+
+std::string HttpGetUtf8(const wchar_t* host, const std::wstring& path) {
+    std::string body;
+    HINTERNET hSession = WinHttpOpen(L"AdhanTaskbarMonitor/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSession) return body;
+    WinHttpSetTimeouts(hSession, 4000, 4000, 4000, 6000);
+    HINTERNET hConnect = WinHttpConnect(hSession, host, INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (hConnect) {
+        HINTERNET hReq = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr,
+                                            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+        if (hReq) {
+            if (WinHttpSendRequest(hReq, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+                WinHttpReceiveResponse(hReq, nullptr)) {
+                DWORD avail = 0;
+                while (WinHttpQueryDataAvailable(hReq, &avail) && avail > 0) {
+                    std::string chunk(avail, '\0');
+                    DWORD read = 0;
+                    if (WinHttpReadData(hReq, chunk.data(), avail, &read) && read > 0) {
+                        chunk.resize(read);
+                        body += chunk;
+                        if (body.size() > 256 * 1024) break;
+                    } else break;
+                }
+            }
+            WinHttpCloseHandle(hReq);
+        }
+        WinHttpCloseHandle(hConnect);
+    }
+    WinHttpCloseHandle(hSession);
+    return body;
+}
+
 }  // namespace
 
 namespace prayer {
@@ -682,65 +727,68 @@ std::vector<LocationConfig> SearchCitiesOnline(const std::wstring& query, AppLan
     std::vector<LocationConfig> results;
     if (query.empty()) return results;
 
-    HINTERNET hSession = WinHttpOpen(L"AdhanTaskbarMonitor/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSession) return results;
+    std::string encoded = UrlEncodeUtf8(query);
+    std::wstring langCode = (lang == AppLang::English) ? L"en" : L"ar";
 
-    WinHttpSetTimeouts(hSession, 4000, 4000, 4000, 6000);
-    HINTERNET hConnect = WinHttpConnect(hSession, L"nominatim.openstreetmap.org", INTERNET_DEFAULT_HTTPS_PORT, 0);
-    if (hConnect) {
-        std::string encoded = UrlEncodeUtf8(query);
-        std::wstring acceptLang = (lang == AppLang::English) ? L"en,ar" : L"ar,en";
-        std::wstring path = L"/search?q=" + Utf8ToWide(encoded) + L"&format=json&limit=10&accept-language=" + acceptLang;
-        HINTERNET hReq = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr,
-                                            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
-        if (hReq) {
-            if (WinHttpSendRequest(hReq, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-                WinHttpReceiveResponse(hReq, nullptr)) {
-                std::string body;
-                DWORD avail = 0;
-                while (WinHttpQueryDataAvailable(hReq, &avail) && avail > 0) {
-                    std::string chunk(avail, '\0');
-                    DWORD read = 0;
-                    if (WinHttpReadData(hReq, chunk.data(), avail, &read) && read > 0) {
-                        chunk.resize(read);
-                        body += chunk;
-                        if (body.size() > 256 * 1024) break;
-                    } else {
-                        break;
-                    }
-                }
-                size_t pos = 0;
-                while (results.size() < 10) {
-                    size_t objStart = body.find('{', pos);
-                    if (objStart == std::string::npos) break;
-                    size_t objEnd = body.find("},", objStart);
-                    if (objEnd == std::string::npos) objEnd = body.find("}]", objStart);
-                    if (objEnd == std::string::npos) break;
-
-                    std::string obj = body.substr(objStart, objEnd - objStart + 1);
-                    std::string disp, latS, lonS;
-                    if (ExtractJsonStringField(obj, "display_name", disp) &&
-                        ExtractJsonStringField(obj, "lat", latS) &&
-                        ExtractJsonStringField(obj, "lon", lonS)) {
-                        LocationConfig lc;
-                        lc.name = Utf8ToWide(disp);
-                        if (lc.name.size() > 64) {
-                            size_t comma = lc.name.find(L',', 20);
-                            if (comma != std::string::npos) lc.name.resize(comma);
-                        }
-                        lc.latitude = std::strtod(latS.c_str(), nullptr);
-                        lc.longitude = std::strtod(lonS.c_str(), nullptr);
-                        results.push_back(std::move(lc));
-                    }
-                    pos = objEnd + 1;
-                }
+    // 1. Primary: Open-Meteo Geocoding API (city/settlement-only with built-in fuzzy typo tolerance)
+    std::wstring omPath = L"/v1/search?name=" + Utf8ToWide(encoded) + L"&count=10&language=" + langCode + L"&format=json";
+    std::string omBody = HttpGetUtf8(L"geocoding-api.open-meteo.com", omPath);
+    size_t resArr = omBody.find("\"results\":[");
+    if (resArr != std::string::npos) {
+        size_t pos = resArr + 11;
+        while (results.size() < 10) {
+            size_t objStart = omBody.find('{', pos);
+            if (objStart == std::string::npos) break;
+            size_t objEnd = omBody.find("},", objStart);
+            if (objEnd == std::string::npos) objEnd = omBody.find("}]", objStart);
+            if (objEnd == std::string::npos) break;
+            std::string obj = omBody.substr(objStart, objEnd - objStart + 1);
+            std::string name, country, admin1;
+            double lat = 0, lon = 0;
+            if (ExtractJsonStringField(obj, "name", name) &&
+                ExtractJsonNumberField(obj, "latitude", lat) &&
+                ExtractJsonNumberField(obj, "longitude", lon)) {
+                ExtractJsonStringField(obj, "country", country);
+                ExtractJsonStringField(obj, "admin1", admin1);
+                std::wstring disp = Utf8ToWide(name);
+                if (!admin1.empty() && admin1 != name) disp += L" - " + Utf8ToWide(admin1);
+                if (!country.empty()) disp += L", " + Utf8ToWide(country);
+                results.push_back({ disp, lat, lon });
             }
-            WinHttpCloseHandle(hReq);
+            pos = objEnd + 1;
         }
-        WinHttpCloseHandle(hConnect);
     }
-    WinHttpCloseHandle(hSession);
+    if (!results.empty()) return results;
+
+    // 2. Fallback: OpenStreetMap Nominatim restricted to settlements
+    std::wstring acceptLang = (lang == AppLang::English) ? L"en,ar" : L"ar,en";
+    std::wstring nomPath = L"/search?q=" + Utf8ToWide(encoded) + L"&featuretype=settlement&format=json&limit=10&accept-language=" + acceptLang;
+    std::string body = HttpGetUtf8(L"nominatim.openstreetmap.org", nomPath);
+    size_t pos = 0;
+    while (results.size() < 10) {
+        size_t objStart = body.find('{', pos);
+        if (objStart == std::string::npos) break;
+        size_t objEnd = body.find("},", objStart);
+        if (objEnd == std::string::npos) objEnd = body.find("}]", objStart);
+        if (objEnd == std::string::npos) break;
+
+        std::string obj = body.substr(objStart, objEnd - objStart + 1);
+        std::string disp, latS, lonS;
+        if (ExtractJsonStringField(obj, "display_name", disp) &&
+            ExtractJsonStringField(obj, "lat", latS) &&
+            ExtractJsonStringField(obj, "lon", lonS)) {
+            LocationConfig lc;
+            lc.name = Utf8ToWide(disp);
+            if (lc.name.size() > 64) {
+                size_t comma = lc.name.find(L',', 20);
+                if (comma != std::string::npos) lc.name.resize(comma);
+            }
+            lc.latitude = std::strtod(latS.c_str(), nullptr);
+            lc.longitude = std::strtod(lonS.c_str(), nullptr);
+            results.push_back(std::move(lc));
+        }
+        pos = objEnd + 1;
+    }
     return results;
 }
 
