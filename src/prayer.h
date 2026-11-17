@@ -35,9 +35,9 @@ enum class AppLang : int {
 };
 
 struct LocationConfig {
-    std::wstring name = L"ينبع الصناعية";
-    double latitude = 23.9896;
-    double longitude = 38.2215;
+    std::wstring name = L"مكة المكرمة";
+    double latitude = 21.4225;
+    double longitude = 39.8262;
 };
 
 struct MethodConfig {

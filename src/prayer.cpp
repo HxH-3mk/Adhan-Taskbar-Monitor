@@ -603,7 +603,11 @@ CountdownState ComputeCountdown(const LocationConfig& loc, const MethodConfig& m
     st.labelText = st.isIqamah ? (en ? L"Iqamah" : L"الإقامة") : st.prayerName;
     st.timeText = dur;
 
-    std::wstring locDisp = (en && loc.name == L"ينبع الصناعية") ? L"Yanbu Industrial City" : loc.name;
+    std::wstring locDisp = loc.name;
+    if (en) {
+        if (loc.name == L"مكة المكرمة") locDisp = L"Makkah";
+        else if (loc.name == L"ينبع الصناعية") locDisp = L"Yanbu Industrial City";
+    }
     std::wstring tip = locDisp;
     if (ma.useManual) tip += en ? L" (Manual)" : L" (يدوي)";
     tip += L"\n";
@@ -646,7 +650,11 @@ TodaySchedule GetTodaySchedule(const LocationConfig& loc, const MethodConfig& mc
     CountdownState st = ComputeCountdown(loc, mc, ma, iq, lang, use12h);
 
     TodaySchedule out;
-    out.locationDisplay = (en && loc.name == L"ينبع الصناعية") ? L"Yanbu Industrial City" : loc.name;
+    out.locationDisplay = loc.name;
+    if (en) {
+        if (loc.name == L"مكة المكرمة") out.locationDisplay = L"Makkah";
+        else if (loc.name == L"ينبع الصناعية") out.locationDisplay = L"Yanbu Industrial City";
+    }
     if (ma.useManual) out.locationDisplay += en ? L" (Manual)" : L" (يدوي)";
 
     if (en) {

@@ -499,6 +499,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     g_widgetBackground = LoadBoolSetting(L"WidgetBackground", false);
     widget::SetBackground(g_widgetBackground);
 
+    if (!LoadBoolSetting(L"LocationConfigured", false)) {
+        settings_ui::ShowLocationDialog(g_inst, g_hwnd, g_loc, g_lang);
+        prayer::SaveLocation(g_loc);
+        SaveBoolSetting(L"LocationConfigured", true);
+    }
+
     UpdateDisplay();
     SetTimer(g_hwnd, TIMER_TICK, 1000, nullptr);
 
