@@ -269,6 +269,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\AdhanTaskbarMonitor");
     if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;
 
+    if (!LoadBoolSetting(L"AutostartInitDone", false)) {
+        SetAutostart(true);
+        SaveBoolSetting(L"AutostartInitDone", true);
+    }
+
     g_lightTaskbar = ReadLightTaskbar();
     ApplyMenuTheme(g_lightTaskbar);
     g_taskbarCreatedMsg = RegisterWindowMessageW(L"TaskbarCreated");
