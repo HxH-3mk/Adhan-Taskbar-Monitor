@@ -4,6 +4,12 @@ A lightweight, native Win32 C++ taskbar widget for Windows 10 & Windows 11 that 
 
 > [العربية](#العربية)
 
+## Screenshots
+
+| Taskbar Widget | Prayer Schedule Tooltip | Right-Click Menu |
+| :---: | :---: | :---: |
+| ![Taskbar Widget](docs/taskbar.png) | ![Tooltip](docs/tooltip.png) | ![Menu](docs/menu.png) |
+
 ## Features
 
 - **Native Taskbar Integration**: Renders directly on the Windows taskbar (`Shell_TrayWnd`) with crisp DPI-aware text (`PerMonitorV2`), hover highlight, Windows 11 Widgets button avoidance, Windows 10 `ReBarWindow32` support, and automatic recovery on Explorer restart.
@@ -66,6 +72,12 @@ The taskbar widget concept, layered rendering approach, and clean native Win32 a
 ## العربية
 
 أداة خفيفة ومباشرة لشريط مهام ويندوز 10 وويندوز 11 (مكتوبة بلغة C++ Win32 أصلية بدون أي اعتماديات خارجية) تعرض عداداً تنازلياً حياً للوقت المتبقي على الأذان والإقامة مباشرة على شريط المهام.
+
+### لقطات شاشة
+
+| شريط المهام | تلميح المواقيت | القائمة |
+| :---: | :---: | :---: |
+| ![شريط المهام](docs/taskbar.png) | ![تلميح المواقيت](docs/tooltip.png) | ![القائمة](docs/menu.png) |
 
 ### المميزات
 
