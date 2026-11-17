@@ -56,7 +56,8 @@ struct IqamahConfig {
 };
 
 struct CityPreset {
-    const wchar_t* name;
+    const wchar_t* nameAr;
+    const wchar_t* nameEn;
     double latitude;
     double longitude;
 };

@@ -184,11 +184,14 @@ void PopulateLocalFilter(LocDlgState* st, const std::wstring& filter) {
     SendMessageW(st->listCities, LB_RESETCONTENT, 0, 0);
     st->shownCities.clear();
     std::wstring q = ToLowerCopy(filter);
+    bool en = (st->lang == AppLang::English);
     for (const auto& p : prayer::Presets()) {
-        std::wstring name = p.name;
-        if (q.empty() || ToLowerCopy(name).find(q) != std::wstring::npos) {
-            st->shownCities.push_back({ p.name, p.latitude, p.longitude });
-            SendMessageW(st->listCities, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(p.name));
+        std::wstring ar = p.nameAr;
+        std::wstring enName = p.nameEn;
+        if (q.empty() || ToLowerCopy(ar).find(q) != std::wstring::npos || ToLowerCopy(enName).find(q) != std::wstring::npos) {
+            const std::wstring& disp = en ? enName : ar;
+            st->shownCities.push_back({ disp, p.latitude, p.longitude });
+            SendMessageW(st->listCities, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(disp.c_str()));
         }
     }
 }
@@ -572,7 +575,10 @@ bool ShowLocationDialog(HINSTANCE inst, HWND parent, LocationConfig& loc, AppLan
     PopulateLocalFilter(&st, L"");
 
     mkLabel(en ? L"Location name:" : L"اسم الموقع:", s(14), s(196), s(90), s(20));
-    st.editName = mkEdit(IDC_LOC_NAME, loc.name.c_str(), s(106), s(192), s(264), s(24));
+    std::wstring initLocName = (en && loc.name == L"مكة المكرمة") ? L"Makkah"
+                             : (en && loc.name == L"ينبع الصناعية") ? L"Yanbu Industrial City"
+                             : loc.name;
+    st.editName = mkEdit(IDC_LOC_NAME, initLocName.c_str(), s(106), s(192), s(264), s(24));
 
     wchar_t latBuf[64]{}, lonBuf[64]{};
     swprintf_s(latBuf, L"%.4f", loc.latitude);
