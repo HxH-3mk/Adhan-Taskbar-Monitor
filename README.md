@@ -34,7 +34,10 @@ A lightweight, native Win32 C++ taskbar widget for Windows 10 & Windows 11 that 
 
 ## Usage
 
-1. Download **`AdhanMonitor-Setup-1.0.0.exe`** (recommended installer — adds Start Menu shortcut & uninstaller) or the portable `AdhanMonitor.exe` from [Releases](../../releases) and run it.
+1. Download **`AdhanMonitor-Setup-1.0.0.exe`** (recommended installer — adds Start Menu shortcut & uninstaller) or the portable `AdhanMonitor-Portable-Not-Recommended.exe` from [Releases](../../releases) and run it.
+
+> [!NOTE]
+> **Windows SmartScreen Notice:** Because this is a free open-source app without a paid Code Signing certificate, Windows may show *"Windows protected your PC"* on first run. Click **More info** → **Run anyway** to proceed. You can also inspect and build the full source code yourself using `build.bat`.
 2. Hover over the taskbar counter to view today's full prayer schedule.
 3. **Right-click** the counter to configure:
    - Edit Location & Search
@@ -102,7 +105,10 @@ The taskbar widget concept, layered rendering approach, and clean native Win32 a
 
 ### طريقة الاستخدام
 
-1. حمّل ملف التثبيت **`AdhanMonitor-Setup-1.0.0.exe`** (الموصى به — يضيف اختصاراً في قائمة ابدأ وخيار إلغاء التثبيت من النظام) أو النسخة المحمولة `AdhanMonitor.exe` من صفحة [الإصدارات (Releases)](../../releases) وشغّله مباشرة.
+1. حمّل ملف التثبيت **`AdhanMonitor-Setup-1.0.0.exe`** (الموصى به — يضيف اختصاراً في قائمة ابدأ وخيار إلغاء التثبيت من النظام) أو النسخة المحمولة `AdhanMonitor-Portable-Not-Recommended.exe` من صفحة [الإصدارات (Releases)](../../releases) وشغّله مباشرة.
+
+> [!NOTE]
+> **تنبيه بخصوص رسالة ويندوز (`Windows protected your PC`):** لأن البرنامج مجاني ومفتوح المصدر ولا يحمل شهادة توقيع رقمي مدفوعة، قد يُظهر ويندوز هذه الرسالة عند أول تشغيل. اضغط **More info** (معلومات إضافية) ثم **Run anyway** (التشغيل على أي حال) للمتابعة. كما يمكنك مراجعة الكود المصدري بالكامل وبناؤه بنفسك عبر `build.bat`.
 2. مرّر الماوس فوق العداد لعرض جميع مواقيت اليوم.
 3. اضغط **بزر الفأرة الأيمن** على العداد للوصول إلى جميع الإعدادات (الموقع، نظام التوقيت والمذهب، الضبط اليدوي، مدة الإقامة، اللغة، تنسيق 12/24 ساعة، التشغيل مع ويندوز).
 
