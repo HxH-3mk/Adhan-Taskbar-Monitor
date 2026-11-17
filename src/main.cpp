@@ -4,14 +4,18 @@
 
 #include "prayer.h"
 #include "settings_ui.h"
+#include "updater.h"
 #include "widget.h"
 
 namespace {
 
 constexpr UINT WM_WIDGET_CLICK = WM_APP + 3;
+constexpr UINT WM_UPDATE_RESULT = WM_APP + 4;
 constexpr UINT_PTR TIMER_TICK = 1;
+constexpr UINT_PTR TIMER_UPDATE_CHECK = 2;
 
 enum MenuId : UINT {
+    ID_UPDATE_NOW = 90,
     ID_EDIT_LOCATION = 100,
     ID_EDIT_METHOD,
     ID_EDIT_MANUAL,
@@ -21,6 +25,7 @@ enum MenuId : UINT {
     ID_TOGGLE_12H,
     ID_WIDGET_BACKGROUND,
     ID_AUTOSTART,
+    ID_CHECK_UPDATES,
     ID_EXIT
 };
 
@@ -49,6 +54,7 @@ ManualAdhanConfig g_ma;
 IqamahConfig g_iq;
 AppLang g_lang = AppLang::Arabic;
 bool g_use12Hour = true;
+updater::UpdateInfo g_updateInfo;
 
 bool ReadPersonalizeBool(const wchar_t* valueName, bool defaultVal) {
     DWORD v = defaultVal ? 1 : 0, sz = sizeof(v);
@@ -123,7 +129,13 @@ void UpdateDisplay() {
         } else if (st.remainingSeconds <= 5 * 60) {
             redAlpha = (st.remainingSeconds % 2 == 0) ? (g_lightTaskbar ? 115 : 140) : 0;
         }
-        widget::SetDisplay(st.isIqamah ? kIconIqamah : kIconClock, st.labelText, st.timeText, false, redAlpha, st.tooltipText);
+        std::wstring tip = st.tooltipText;
+        if (g_updateInfo.available) {
+            tip += (g_lang == AppLang::English)
+                ? (L"\n\nUpdate available: " + g_updateInfo.version)
+                : (L"\n\nيتوفر تحديث جديد: " + g_updateInfo.version);
+        }
+        widget::SetDisplay(st.isIqamah ? kIconIqamah : kIconClock, st.labelText, st.timeText, false, redAlpha, tip);
         if (!widget::Reposition()) {
             widget::Destroy();
         }
@@ -323,6 +335,14 @@ void ShowMenu() {
     HMENU m = CreatePopupMenu();
     if (!m) return;
 
+    if (g_updateInfo.available) {
+        std::wstring updTxt = en
+            ? (L"Update available (" + g_updateInfo.version + L") - Download...")
+            : (L"تحديث جديد متاح (" + g_updateInfo.version + L") - تحميل...");
+        AppendMenuW(m, MF_STRING, ID_UPDATE_NOW, updTxt.c_str());
+        AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    }
+
     AppendMenuW(m, MF_STRING, ID_EDIT_LOCATION, en ? L"Edit Location & Search..." : L"تعديل الموقع والبحث...");
     AppendMenuW(m, MF_STRING, ID_EDIT_METHOD, en ? L"Calculation Method & Madhhab..." : L"نظام التوقيت والمذهب...");
     AppendMenuW(m, MF_STRING, ID_EDIT_MANUAL, en ? L"Manual Adhan Times..." : L"ضبط أوقات الأذان يدوياً...");
@@ -340,6 +360,7 @@ void ShowMenu() {
                 en ? L"Background behind taskbar text" : L"خلفية خلف النص (للشريط الشفاف)");
     AppendMenuW(m, MF_STRING | (AutostartEnabled() ? MF_CHECKED : 0), ID_AUTOSTART,
                 en ? L"Start with Windows" : L"التشغيل مع ويندوز");
+    AppendMenuW(m, MF_STRING, ID_CHECK_UPDATES, en ? L"Check for updates..." : L"التحقق من التحديثات...");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_EXIT, en ? L"Exit" : L"خروج");
 
@@ -351,6 +372,15 @@ void ShowMenu() {
     DestroyMenu(m);
 
     switch (cmd) {
+        case ID_UPDATE_NOW:
+            if (!g_updateInfo.url.empty()) {
+                ShellExecuteW(nullptr, L"open", g_updateInfo.url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            }
+            break;
+        case ID_CHECK_UPDATES:
+            updater::CheckAsync(g_hwnd, WM_UPDATE_RESULT, L"HxH-3mk/Adhan-Taskbar-Monitor",
+                                kSettingsKey, 1, 0, 0, 3, true);
+            break;
         case ID_EDIT_LOCATION:
             g_dialogOpen = true;
             if (settings_ui::ShowLocationDialog(g_inst, g_hwnd, g_loc, g_lang)) {
@@ -423,8 +453,33 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == 1) ShowMenu();
             else if (wp == 0) ShowSchedulePopup();
             return 0;
+        case WM_UPDATE_RESULT:
+            if (wp == 1) {
+                g_updateInfo = updater::LatestResult();
+                widget::SetUpdateAvailable(g_updateInfo.available);
+                UpdateDisplay();
+                if (lp == 1 && !g_updateInfo.url.empty()) {
+                    bool en = (g_lang == AppLang::English);
+                    std::wstring msgText = en
+                        ? (L"A new version (" + g_updateInfo.version + L") is available on GitHub.\nOpen download page?")
+                        : (L"يتوفر إصدار جديد (" + g_updateInfo.version + L") على GitHub.\nهل تريد فتح صفحة التحميل؟");
+                    if (MessageBoxW(nullptr, msgText.c_str(), L"Adhan Taskbar Monitor",
+                                    MB_YESNO | MB_ICONINFORMATION | (en ? 0 : (MB_RTLREADING | MB_RIGHT))) == IDYES) {
+                        ShellExecuteW(nullptr, L"open", g_updateInfo.url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                    }
+                }
+            } else if (lp == 1) {
+                bool en = (g_lang == AppLang::English);
+                MessageBoxW(nullptr, en ? L"You are using the latest version." : L"أنت تستخدم أحدث إصدار.",
+                            L"Adhan Taskbar Monitor", MB_OK | MB_ICONINFORMATION | (en ? 0 : (MB_RTLREADING | MB_RIGHT)));
+            }
+            return 0;
         case WM_TIMER:
             if (wp == TIMER_TICK) UpdateDisplay();
+            else if (wp == TIMER_UPDATE_CHECK) {
+                updater::CheckAsync(g_hwnd, WM_UPDATE_RESULT, L"HxH-3mk/Adhan-Taskbar-Monitor",
+                                    kSettingsKey, 1, 0, 0, 3, false);
+            }
             return 0;
         case WM_POWERBROADCAST:
             if (wp == PBT_APMRESUMEAUTOMATIC) UpdateDisplay();
@@ -507,6 +562,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
 
     UpdateDisplay();
     SetTimer(g_hwnd, TIMER_TICK, 1000, nullptr);
+    SetTimer(g_hwnd, TIMER_UPDATE_CHECK, 24 * 60 * 60 * 1000, nullptr);
+    updater::CheckAsync(g_hwnd, WM_UPDATE_RESULT, L"HxH-3mk/Adhan-Taskbar-Monitor",
+                        kSettingsKey, 1, 0, 0, 3, false);
 
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) {

@@ -11,6 +11,7 @@ HWND g_wnd, g_taskbar, g_tip, g_notify, g_rebar;
 UINT g_clickMsg;
 bool g_light, g_hover;
 bool g_background;
+bool g_updateDot = false;
 wchar_t g_iconGlyph = 0xE823;  // Clock
 std::wstring g_label;
 std::wstring g_timeText;
@@ -252,6 +253,16 @@ void Paint() {
         x += p.m.w + p.gapAfter;
     }
 
+    if (g_updateDot) {
+        int r = std::max(2, Px(3));
+        int cx = W - Px(5);
+        int cy = Px(7);
+        Rgb dotCol{ 34, 197, 94 };
+        for (int dy = -r; dy <= r; dy++)
+            for (int dx = -r; dx <= r; dx++)
+                if (dx * dx + dy * dy <= r * r) cv.Blend(cx + dx, cy + dy, dotCol, 240);
+    }
+
     HDC screen = GetDC(nullptr);
     HDC mem = CreateCompatibleDC(screen);
     BITMAPINFO bi{};
@@ -404,6 +415,13 @@ void SetLightTheme(bool light) {
     g_light = light;
     ApplyTipTheme();
     Paint();
+}
+
+void SetUpdateAvailable(bool on) {
+    if (g_updateDot != on) {
+        g_updateDot = on;
+        Paint();
+    }
 }
 
 void SetBackground(bool on) {

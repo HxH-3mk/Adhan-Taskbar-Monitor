@@ -12,6 +12,7 @@ void Destroy();
 bool Alive();
 void SetDisplay(wchar_t iconGlyph, const std::wstring& label, const std::wstring& timeText, bool accent, int redBoxAlpha, const std::wstring& tooltip);
 void SetLightTheme(bool light);
+void SetUpdateAvailable(bool on);
 // Draws a rounded plate in the taskbar's colours behind the text (kept across Create/Destroy).
 void SetBackground(bool on);
 // Re-checks the taskbar layout and moves the widget if needed; call about once a second.
