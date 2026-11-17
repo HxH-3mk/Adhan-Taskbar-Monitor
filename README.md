@@ -34,7 +34,7 @@ A lightweight, native Win32 C++ taskbar widget for Windows 10 & Windows 11 that 
 
 ## Usage
 
-1. Download `AdhanMonitor.exe` from [Releases](../../releases) and run it.
+1. Download **`AdhanMonitor-Setup-1.0.0.exe`** (recommended installer — adds Start Menu shortcut & uninstaller) or the portable `AdhanMonitor.exe` from [Releases](../../releases) and run it.
 2. Hover over the taskbar counter to view today's full prayer schedule.
 3. **Right-click** the counter to configure:
    - Edit Location & Search
@@ -102,7 +102,7 @@ The taskbar widget concept, layered rendering approach, and clean native Win32 a
 
 ### طريقة الاستخدام
 
-1. حمّل ملف `AdhanMonitor.exe` من صفحة [الإصدارات (Releases)](../../releases) وشغّله مباشرة.
+1. حمّل ملف التثبيت **`AdhanMonitor-Setup-1.0.0.exe`** (الموصى به — يضيف اختصاراً في قائمة ابدأ وخيار إلغاء التثبيت من النظام) أو النسخة المحمولة `AdhanMonitor.exe` من صفحة [الإصدارات (Releases)](../../releases) وشغّله مباشرة.
 2. مرّر الماوس فوق العداد لعرض جميع مواقيت اليوم.
 3. اضغط **بزر الفأرة الأيمن** على العداد للوصول إلى جميع الإعدادات (الموقع، نظام التوقيت والمذهب، الضبط اليدوي، مدة الإقامة، اللغة، تنسيق 12/24 ساعة، التشغيل مع ويندوز).
 
