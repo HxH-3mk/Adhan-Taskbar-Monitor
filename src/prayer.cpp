@@ -398,8 +398,11 @@ const std::vector<CityPreset>& Presets() {
 }
 
 AppLang LoadLanguage() {
-    int v = ReadRegInt(L"Language", 0);
-    return (v == static_cast<int>(AppLang::English)) ? AppLang::English : AppLang::Arabic;
+    DWORD v = 0, sz = sizeof(v);
+    if (RegGetValueW(HKEY_CURRENT_USER, kSettingsKey, L"Language", RRF_RT_REG_DWORD, nullptr, &v, &sz) == ERROR_SUCCESS) {
+        return (v == static_cast<DWORD>(AppLang::English)) ? AppLang::English : AppLang::Arabic;
+    }
+    return (PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_ARABIC) ? AppLang::Arabic : AppLang::English;
 }
 
 void SaveLanguage(AppLang lang) {
