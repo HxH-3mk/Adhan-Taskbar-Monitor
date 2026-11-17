@@ -50,6 +50,12 @@ build.bat
 
 This produces a standalone `AdhanMonitor.exe`.
 
+## Support
+
+If you find this project useful, you can support its development:
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-hxh3mk-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/hxh3mk)
+
 ---
 
 <a id="العربية"></a>
@@ -83,3 +89,9 @@ This produces a standalone `AdhanMonitor.exe`.
 1. حمّل ملف `AdhanMonitor.exe` من صفحة [الإصدارات (Releases)](../../releases) وشغّله مباشرة.
 2. مرّر الماوس فوق العداد لعرض جميع مواقيت اليوم.
 3. اضغط **بزر الفأرة الأيمن** على العداد للوصول إلى جميع الإعدادات (الموقع، نظام التوقيت والمذهب، الضبط اليدوي، مدة الإقامة، اللغة، تنسيق 12/24 ساعة، التشغيل مع ويندوز).
+
+### الدعم
+
+إذا أعجبك البرنامج وأفادك، يمكنك دعمه عبر:
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-hxh3mk-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/hxh3mk)
