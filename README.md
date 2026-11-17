@@ -56,6 +56,10 @@ If you find this project useful, you can support its development:
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-hxh3mk-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/hxh3mk)
 
+## Acknowledgments
+
+The taskbar widget concept, layered rendering approach, and clean native Win32 architecture were inspired by [Wireless-Device-Battery-Monitor](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor) by [krisgfx9](https://github.com/krisgfx9). All credit for the original taskbar integration pattern belongs to its author.
+
 ---
 
 <a id="العربية"></a>
@@ -95,3 +99,7 @@ If you find this project useful, you can support its development:
 إذا أعجبك البرنامج وأفادك، يمكنك دعمه عبر:
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-hxh3mk-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/hxh3mk)
+
+### شكر وتقدير
+
+تمت الاستفادة في فكرة الظهور على شريط المهام وبنية الكود النظيفة بلغة Win32 من مشروع [Wireless-Device-Battery-Monitor](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor) للمطور [krisgfx9](https://github.com/krisgfx9)، مع حفظ كامل الحقوق والتقدير لصاحب الفكرة والتصميم الأصلي.
