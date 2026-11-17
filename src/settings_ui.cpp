@@ -116,9 +116,19 @@ int EditDistance(const std::wstring& a, const std::wstring& b) {
     return prev[m];
 }
 
-std::wstring CityPartOnly(const std::wstring& full) {
-    size_t dash = full.find(L" - ");
-    return (dash != std::wstring::npos) ? full.substr(0, dash) : full;
+int MinWordEditDistance(const std::wstring& q, const std::wstring& full) {
+    int best = EditDistance(q, full);
+    size_t i = 0;
+    while (i < full.size()) {
+        while (i < full.size() && (full[i] == L' ' || full[i] == L'-' || full[i] == L'/' || full[i] == L',')) i++;
+        if (i >= full.size()) break;
+        size_t j = i;
+        while (j < full.size() && full[j] != L' ' && full[j] != L'-' && full[j] != L'/' && full[j] != L',') j++;
+        std::wstring word = full.substr(i, j - i);
+        best = std::min(best, EditDistance(q, word));
+        i = j;
+    }
+    return best;
 }
 
 struct ThemeColors {
@@ -235,9 +245,7 @@ void PopulateLocalFilter(LocDlgState* st, const std::wstring& filter) {
             matches.push_back({ 0, disp, p.latitude, p.longitude });
             continue;
         }
-        std::wstring arCity = NormalizeForSearch(CityPartOnly(p.nameAr));
-        std::wstring enCity = NormalizeForSearch(CityPartOnly(p.nameEn));
-        int d = std::min(EditDistance(q, arCity), EditDistance(q, enCity));
+        int d = std::min(MinWordEditDistance(q, arNorm), MinWordEditDistance(q, enNorm));
         int maxAllowed = std::max(1, static_cast<int>(q.size()) / 3 + 1);
         if (d <= maxAllowed) {
             matches.push_back({ d, disp, p.latitude, p.longitude });
@@ -296,15 +304,27 @@ LRESULT CALLBACK LocDlgProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                     return 0;
                 }
                 SetCursor(LoadCursorW(nullptr, IDC_WAIT));
-                auto res = prayer::SearchCitiesOnline(q, st->lang);
+                auto onlineRes = prayer::SearchCitiesOnline(q, st->lang);
                 SetCursor(LoadCursorW(nullptr, IDC_ARROW));
-                if (res.empty()) {
+                PopulateLocalFilter(st, q);
+                std::vector<LocationConfig> merged = st->shownCities;
+                for (auto& oc : onlineRes) {
+                    bool dup = false;
+                    for (const auto& ex : merged) {
+                        if (std::fabs(ex.latitude - oc.latitude) < 0.05 && std::fabs(ex.longitude - oc.longitude) < 0.05) {
+                            dup = true;
+                            break;
+                        }
+                    }
+                    if (!dup) merged.push_back(std::move(oc));
+                }
+                if (merged.empty()) {
                     MessageBoxW(h, en ? L"No results found or connection failed." : L"لم يتم العثور على نتائج عبر الإنترنت أو تعذر الاتصال.",
                                 en ? L"Search Results" : L"نتائج البحث",
                                 MB_OK | MB_ICONINFORMATION | (en ? 0 : (MB_RTLREADING | MB_RIGHT)));
                 } else {
                     SendMessageW(st->listCities, LB_RESETCONTENT, 0, 0);
-                    st->shownCities = std::move(res);
+                    st->shownCities = std::move(merged);
                     for (const auto& c : st->shownCities) {
                         SendMessageW(st->listCities, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(c.name.c_str()));
                     }

@@ -730,13 +730,18 @@ std::vector<LocationConfig> SearchCitiesOnline(const std::wstring& query, AppLan
     std::string encoded = UrlEncodeUtf8(query);
     std::wstring langCode = (lang == AppLang::English) ? L"en" : L"ar";
 
-    // 1. Primary: Open-Meteo Geocoding API (city/settlement-only with built-in fuzzy typo tolerance)
+    // 1. Primary: Open-Meteo Geocoding API (city/settlement-only, sorted by population)
+    struct OnlineCandidate {
+        LocationConfig loc;
+        double pop;
+    };
+    std::vector<OnlineCandidate> omList;
     std::wstring omPath = L"/v1/search?name=" + Utf8ToWide(encoded) + L"&count=10&language=" + langCode + L"&format=json";
     std::string omBody = HttpGetUtf8(L"geocoding-api.open-meteo.com", omPath);
     size_t resArr = omBody.find("\"results\":[");
     if (resArr != std::string::npos) {
         size_t pos = resArr + 11;
-        while (results.size() < 10) {
+        while (omList.size() < 10) {
             size_t objStart = omBody.find('{', pos);
             if (objStart == std::string::npos) break;
             size_t objEnd = omBody.find("},", objStart);
@@ -744,21 +749,28 @@ std::vector<LocationConfig> SearchCitiesOnline(const std::wstring& query, AppLan
             if (objEnd == std::string::npos) break;
             std::string obj = omBody.substr(objStart, objEnd - objStart + 1);
             std::string name, country, admin1;
-            double lat = 0, lon = 0;
+            double lat = 0, lon = 0, pop = 0;
             if (ExtractJsonStringField(obj, "name", name) &&
                 ExtractJsonNumberField(obj, "latitude", lat) &&
                 ExtractJsonNumberField(obj, "longitude", lon)) {
                 ExtractJsonStringField(obj, "country", country);
                 ExtractJsonStringField(obj, "admin1", admin1);
+                ExtractJsonNumberField(obj, "population", pop);
                 std::wstring disp = Utf8ToWide(name);
                 if (!admin1.empty() && admin1 != name) disp += L" - " + Utf8ToWide(admin1);
                 if (!country.empty()) disp += L", " + Utf8ToWide(country);
-                results.push_back({ disp, lat, lon });
+                omList.push_back({ { disp, lat, lon }, pop });
             }
             pos = objEnd + 1;
         }
     }
-    if (!results.empty()) return results;
+    if (!omList.empty()) {
+        std::stable_sort(omList.begin(), omList.end(), [](const OnlineCandidate& a, const OnlineCandidate& b) {
+            return a.pop > b.pop;
+        });
+        for (auto& c : omList) results.push_back(std::move(c.loc));
+        return results;
+    }
 
     // 2. Fallback: OpenStreetMap Nominatim restricted to settlements
     std::wstring acceptLang = (lang == AppLang::English) ? L"en,ar" : L"ar,en";
