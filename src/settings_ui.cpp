@@ -100,7 +100,7 @@ struct ThemeColors {
 bool IsAppLightTheme() {
     DWORD v = 0, sz = sizeof(v);
     if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                     L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &v, &sz) == ERROR_SUCCESS) {
+                     L"SystemUsesLightTheme", RRF_RT_REG_DWORD, nullptr, &v, &sz) == ERROR_SUCCESS) {
         return v != 0;
     }
     return false;  // Dark mode by default

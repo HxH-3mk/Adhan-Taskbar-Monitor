@@ -266,7 +266,7 @@ void ShowSchedulePopup() {
 
     auto* st = new SchedulePopupState();
     st->sched = prayer::GetTodaySchedule(g_loc, g_mc, g_ma, g_iq, g_lang, g_use12Hour);
-    st->light = g_lightApps;
+    st->light = g_lightTaskbar;
     st->en = (g_lang == AppLang::English);
 
     auto mkF = [&](int px, int weight) {
