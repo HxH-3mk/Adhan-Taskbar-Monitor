@@ -1,22 +1,20 @@
 #pragma once
-// A small transparent strip on the taskbar, just left of the notification area, showing
-// "[icon] الفجر 01:23:45". Implemented as a layered child window of the taskbar (Shell_TrayWnd).
+// Transparent taskbar strip(s) on all connected monitors (Shell_TrayWnd + Shell_SecondaryTrayWnd).
 #include <windows.h>
 #include <string>
 
 namespace widget {
-// Creates the widget on the primary taskbar. Clicks are reported by posting `clickMsg` to `notifyWnd`
-// (wParam == 1 for right-click, 0 for left-click).
+// Creates widgets on all active horizontal taskbars. Clicks post `clickMsg` to `notifyWnd`
+// (wParam == 1 for right-click, 0 for left-click; lParam == clicked widget HWND).
 bool Create(HINSTANCE inst, HWND notifyWnd, UINT clickMsg, bool lightTheme);
 void Destroy();
 bool Alive();
-void SetDisplay(wchar_t iconGlyph, const std::wstring& label, const std::wstring& timeText, bool accent, int redBoxAlpha, const std::wstring& tooltip);
+void SetDisplay(wchar_t iconGlyph, const std::wstring& label, const std::wstring& timeText,
+                bool accent, int redBoxAlpha, const std::wstring& tooltip);
 void SetLightTheme(bool light);
 void SetUpdateAvailable(bool on);
-// Draws a rounded plate in the taskbar's colours behind the text (kept across Create/Destroy).
 void SetBackground(bool on);
-// Re-checks the taskbar layout and moves the widget if needed; call about once a second.
-// Returns false when the taskbar it was attached to is gone.
+// Syncs widgets with connected monitors and repositions them; call about once a second.
 bool Reposition();
-RECT ScreenRect();
+RECT ScreenRect(HWND widgetWnd = nullptr);
 }  // namespace widget

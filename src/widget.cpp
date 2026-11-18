@@ -3,39 +3,56 @@
 #include <commctrl.h>
 #include <uiautomation.h>
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 namespace {
 
-HWND g_wnd, g_taskbar, g_tip, g_notify, g_rebar;
-UINT g_clickMsg;
-bool g_light, g_hover;
-bool g_background;
+struct BarInstance {
+    HWND taskbar = nullptr;
+    HWND wnd = nullptr;
+    HWND tip = nullptr;
+    HWND rebar = nullptr;
+    bool isPrimary = false;
+    bool hover = false;
+    int lastW = -1;
+    int lastDpi = 0;
+    int lastLeft = -1;
+    SIZE size{};
+    RECT lastTray{};
+    RECT lastBar{};
+    RECT lastWidgets{};
+    RECT lastBattery{};
+};
+
+HINSTANCE g_inst = nullptr;
+HWND g_notify = nullptr;
+UINT g_clickMsg = 0;
+bool g_light = false;
+bool g_background = false;
 bool g_updateDot = false;
-wchar_t g_iconGlyph = 0xE823;  // Clock
+wchar_t g_iconGlyph = 0xE823;
 std::wstring g_label;
 std::wstring g_timeText;
 bool g_accent = false;
 int g_redBoxAlpha = 0;
 std::wstring g_tipText;
-RECT g_lastTray{}, g_lastBar{}, g_lastWidgets{}, g_lastBattery{};
-int g_lastW = -1, g_lastDpi = 0, g_lastLeft = -1;
-SIZE g_size{};
+std::vector<std::unique_ptr<BarInstance>> g_bars;
 
 const wchar_t* kClass = L"AdhanTaskbarWidget";
 
-int Dpi() {
-    UINT d = g_taskbar ? GetDpiForWindow(g_taskbar) : 0;
-    return d ? (int)d : 96;
+int DpiFor(HWND taskbar) {
+    UINT d = taskbar ? GetDpiForWindow(taskbar) : 0;
+    return d ? static_cast<int>(d) : 96;
 }
-int Px(int v) { return MulDiv(v, Dpi(), 96); }
+int Px(HWND taskbar, int v) { return MulDiv(v, DpiFor(taskbar), 96); }
 
-// Background UI Automation lookup for Windows 11 Widgets button (avoids Explorer deadlock).
+// Background UI Automation lookup for Windows 11 Widgets button on primary taskbar.
 SRWLOCK g_wbLock = SRWLOCK_INIT;
 RECT g_wbRect{};
-HWND g_wbRectBar;
-HWND g_wbTaskbar;
-HANDLE g_wbWake;
+HWND g_wbRectBar = nullptr;
+HWND g_wbTaskbar = nullptr;
+HANDLE g_wbWake = nullptr;
 
 DWORD WINAPI WidgetsButtonThread(LPVOID) {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -94,21 +111,21 @@ void WatchWidgetsButton(HWND taskbar) {
     if (g_wbWake) SetEvent(g_wbWake);
 }
 
-RECT WidgetsButtonRect() {
+RECT WidgetsButtonRect(HWND taskbar) {
     AcquireSRWLockShared(&g_wbLock);
-    RECT r = g_wbRectBar && g_wbRectBar == g_wbTaskbar ? g_wbRect : RECT{};
+    RECT r = (g_wbRectBar && g_wbRectBar == taskbar) ? g_wbRect : RECT{};
     ReleaseSRWLockShared(&g_wbLock);
     return r;
 }
 
-void ApplyTipTheme() {
-    if (!g_tip) return;
+void ApplyTipTheme(HWND tip) {
+    if (!tip) return;
     using SetWindowThemeFn = HRESULT(WINAPI*)(HWND, LPCWSTR, LPCWSTR);
     static HMODULE ux = LoadLibraryExW(L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     static auto setTheme = ux ? (SetWindowThemeFn)GetProcAddress(ux, "SetWindowTheme") : nullptr;
     if (setTheme) {
-        setTheme(g_tip, g_light ? L"Explorer" : L"DarkMode_Explorer", nullptr);
-        SendMessageW(g_tip, WM_THEMECHANGED, 0, 0);
+        setTheme(tip, g_light ? L"Explorer" : L"DarkMode_Explorer", nullptr);
+        SendMessageW(tip, WM_THEMECHANGED, 0, 0);
     }
 }
 
@@ -140,22 +157,22 @@ Mask RenderMask(const std::wstring& s, HFONT font, bool darkOnLight) {
     HDC dc = CreateCompatibleDC(nullptr);
     HGDIOBJ of = SelectObject(dc, font);
     SIZE sz{};
-    GetTextExtentPoint32W(dc, s.c_str(), (int)s.size(), &sz);
+    GetTextExtentPoint32W(dc, s.c_str(), static_cast<int>(s.size()), &sz);
     int W = sz.cx + 8, H = sz.cy + 8;
     BITMAPINFO bi{};
     bi.bmiHeader = { sizeof(BITMAPINFOHEADER), W, -H, 1, 32, BI_RGB };
     void* bits = nullptr;
     HBITMAP bmp = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
     HGDIOBJ ob = SelectObject(dc, bmp);
-    memset(bits, darkOnLight ? 0xFF : 0x00, (size_t)W * H * 4);
+    memset(bits, darkOnLight ? 0xFF : 0x00, static_cast<size_t>(W) * H * 4);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, darkOnLight ? RGB(0, 0, 0) : RGB(255, 255, 255));
-    TextOutW(dc, 4, 4, s.c_str(), (int)s.size());
+    TextOutW(dc, 4, 4, s.c_str(), static_cast<int>(s.size()));
     GdiFlush();
     auto* p = static_cast<DWORD*>(bits);
     auto cover = [&](DWORD v) -> BYTE {
-        int c = (int)((v & 0xFF) + ((v >> 8) & 0xFF) + ((v >> 16) & 0xFF)) / 3;
-        return (BYTE)(darkOnLight ? 255 - c : c);
+        int c = static_cast<int>((v & 0xFF) + ((v >> 8) & 0xFF) + ((v >> 16) & 0xFF)) / 3;
+        return static_cast<BYTE>(darkOnLight ? 255 - c : c);
     };
     int x0 = W, y0 = H, x1 = -1, y1 = -1;
     for (int y = 0; y < H; y++)
@@ -164,7 +181,7 @@ Mask RenderMask(const std::wstring& s, HFONT font, bool darkOnLight) {
     if (x1 >= 0) {
         m.w = x1 - x0 + 1;
         m.h = y1 - y0 + 1;
-        m.a.resize((size_t)m.w * m.h);
+        m.a.resize(static_cast<size_t>(m.w) * m.h);
         for (int y = 0; y < m.h; y++)
             for (int x = 0; x < m.w; x++) m.a[y * m.w + x] = cover(p[(y0 + y) * W + x0 + x]);
     }
@@ -180,7 +197,7 @@ struct Rgb { int r, g, b; };
 struct Canvas {
     int w, h;
     std::vector<DWORD> px;
-    Canvas(int w_, int h_) : w(w_), h(h_), px((size_t)w_ * h_, 0) {}
+    Canvas(int w_, int h_) : w(w_), h(h_), px(static_cast<size_t>(w_) * h_, 0) {}
     void Blend(int x, int y, Rgb c, int a) {
         if (x < 0 || y < 0 || x >= w || y >= h || a <= 0) return;
         DWORD d = px[y * w + x];
@@ -190,7 +207,8 @@ struct Canvas {
         int orr = c.r * a / 255 + dr * inv / 255;
         int og = c.g * a / 255 + dg * inv / 255;
         int ob = c.b * a / 255 + db * inv / 255;
-        px[y * w + x] = ((DWORD)oa << 24) | ((DWORD)orr << 16) | ((DWORD)og << 8) | (DWORD)ob;
+        px[y * w + x] = (static_cast<DWORD>(oa) << 24) | (static_cast<DWORD>(orr) << 16) |
+                        (static_cast<DWORD>(og) << 8) | static_cast<DWORD>(ob);
     }
     void Draw(const Mask& m, int x, int y, Rgb c, int alpha) {
         for (int j = 0; j < m.h; j++)
@@ -200,18 +218,19 @@ struct Canvas {
 
 struct Piece { Mask m; Rgb color; int alpha; int gapAfter; };
 
-std::vector<Piece> Layout(int& width) {
+std::vector<Piece> Layout(HWND taskbar, int& width) {
+    auto px = [&](int v) { return Px(taskbar, v); };
     Rgb fg = g_light ? Rgb{ 0, 0, 0 } : Rgb{ 255, 255, 255 };
     Rgb accent = g_light ? Rgb{ 0, 120, 212 } : Rgb{ 96, 205, 255 };
-    HFONT icons = MakeFont(Px(16), FW_NORMAL, L"Segoe Fluent Icons", L"Segoe MDL2 Assets");
-    HFONT text = MakeFont(Px(13), FW_NORMAL, L"Segoe UI Variable Text", L"Segoe UI", Px(12));
+    HFONT icons = MakeFont(px(16), FW_NORMAL, L"Segoe Fluent Icons", L"Segoe MDL2 Assets");
+    HFONT text = MakeFont(px(13), FW_NORMAL, L"Segoe UI Variable Text", L"Segoe UI", px(12));
 
     std::vector<Piece> out;
     Rgb tc = g_accent ? accent : fg;
     bool hasText = !g_label.empty() || !g_timeText.empty();
-    out.push_back({ RenderMask(std::wstring(1, g_iconGlyph), icons, g_light), tc, 255, hasText ? Px(6) : 0 });
+    out.push_back({ RenderMask(std::wstring(1, g_iconGlyph), icons, g_light), tc, 255, hasText ? px(6) : 0 });
     if (!g_label.empty()) {
-        out.push_back({ RenderMask(g_label, text, g_light), tc, 255, g_timeText.empty() ? 0 : Px(5) });
+        out.push_back({ RenderMask(g_label, text, g_light), tc, 255, g_timeText.empty() ? 0 : px(5) });
     }
     if (!g_timeText.empty()) {
         out.push_back({ RenderMask(g_timeText, text, g_light), tc, 255, 0 });
@@ -219,20 +238,21 @@ std::vector<Piece> Layout(int& width) {
     DeleteObject(icons);
     DeleteObject(text);
 
-    width = Px(8) * 2;
+    width = px(8) * 2;
     for (auto& p : out) width += p.m.w + p.gapAfter;
     return out;
 }
 
-void Paint() {
-    if (!g_wnd) return;
-    RECT bar;
-    GetClientRect(g_taskbar, &bar);
+void PaintBar(BarInstance& b) {
+    if (!b.wnd || !b.taskbar) return;
+    RECT bar{};
+    GetClientRect(b.taskbar, &bar);
     int H = bar.bottom - bar.top;
     int W = 0;
-    auto pieces = Layout(W);
+    auto pieces = Layout(b.taskbar, W);
     if (W <= 0 || H <= 0) return;
     Canvas cv(W, H);
+    auto px = [&](int v) { return Px(b.taskbar, v); };
 
     for (auto& p : cv.px) p = 0x01000000;
     auto roundRect = [&](int inset, int r, Rgb c, int a) {
@@ -243,20 +263,20 @@ void Paint() {
                 if (dx * dx + dy * dy <= r * r) cv.Blend(x, y, c, a);
             }
     };
-    if (g_background) roundRect(Px(4), Px(6), g_light ? Rgb{ 243, 243, 243 } : Rgb{ 32, 32, 32 }, 240);
-    if (g_redBoxAlpha > 0) roundRect(Px(4), Px(6), Rgb{ 220, 38, 38 }, g_redBoxAlpha);
-    if (g_hover) roundRect(Px(4), Px(4), g_light ? Rgb{ 0, 0, 0 } : Rgb{ 255, 255, 255 }, g_light ? 20 : 26);
+    if (g_background) roundRect(px(4), px(6), g_light ? Rgb{ 243, 243, 243 } : Rgb{ 32, 32, 32 }, 240);
+    if (g_redBoxAlpha > 0) roundRect(px(4), px(6), Rgb{ 220, 38, 38 }, g_redBoxAlpha);
+    if (b.hover) roundRect(px(4), px(4), g_light ? Rgb{ 0, 0, 0 } : Rgb{ 255, 255, 255 }, g_light ? 20 : 26);
 
-    int x = Px(8);
+    int x = px(8);
     for (auto& p : pieces) {
         cv.Draw(p.m, x, (H - p.m.h) / 2, p.color, p.alpha);
         x += p.m.w + p.gapAfter;
     }
 
     if (g_updateDot) {
-        int r = std::max(2, Px(3));
-        int cx = W - Px(5);
-        int cy = Px(7);
+        int r = std::max(2, px(3));
+        int cx = W - px(5);
+        int cy = px(7);
         Rgb dotCol{ 34, 197, 94 };
         for (int dy = -r; dy <= r; dy++)
             for (int dx = -r; dx <= r; dx++)
@@ -269,48 +289,246 @@ void Paint() {
     bi.bmiHeader = { sizeof(BITMAPINFOHEADER), W, -H, 1, 32, BI_RGB };
     void* bits = nullptr;
     HBITMAP bmp = CreateDIBSection(mem, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    memcpy(bits, cv.px.data(), (size_t)W * H * 4);
+    memcpy(bits, cv.px.data(), static_cast<size_t>(W) * H * 4);
     HGDIOBJ ob = SelectObject(mem, bmp);
-    g_size = { W, H };
+    b.size = { W, H };
     SIZE sz{ W, H };
     POINT src{ 0, 0 };
     BLENDFUNCTION bf{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-    UpdateLayeredWindow(g_wnd, screen, nullptr, &sz, mem, &src, 0, &bf, ULW_ALPHA);
+    UpdateLayeredWindow(b.wnd, screen, nullptr, &sz, mem, &src, 0, &bf, ULW_ALPHA);
     SelectObject(mem, ob);
     DeleteObject(bmp);
     DeleteDC(mem);
     ReleaseDC(nullptr, screen);
-    g_lastW = -1;
+    b.lastW = -1;
+}
+
+bool RepositionBar(BarInstance& b) {
+    if (!b.wnd || !IsWindow(b.wnd) || !b.taskbar || !IsWindow(b.taskbar)) return false;
+    RECT bar{};
+    GetWindowRect(b.taskbar, &bar);
+    if (bar.bottom - bar.top > bar.right - bar.left) return false;
+
+    int dpi = DpiFor(b.taskbar);
+    if (dpi != b.lastDpi) {
+        b.lastDpi = dpi;
+        PaintBar(b);
+    }
+
+    auto px = [&](int v) { return Px(b.taskbar, v); };
+    bool rtl = (GetWindowLongW(b.taskbar, GWL_EXSTYLE) & WS_EX_LAYOUTRTL) != 0;
+
+    RECT tr{};
+    int edge = rtl ? bar.left : bar.right;
+
+    if (b.isPrimary) {
+        HWND tray = FindWindowExW(b.taskbar, nullptr, L"TrayNotifyWnd", nullptr);
+        if (!tray) return true;
+        GetWindowRect(tray, &tr);
+        edge = rtl ? tr.right : tr.left;
+    } else {
+        // Secondary taskbar: check for clock/tray child windows, or reserve space for Win11 XAML clock.
+        bool foundClock = false;
+        for (const wchar_t* cls : { L"TrayNotifyWnd", L"ClockButton", L"TrayClockWClass" }) {
+            HWND clk = FindWindowExW(b.taskbar, nullptr, cls, nullptr);
+            if (clk && IsWindowVisible(clk)) {
+                GetWindowRect(clk, &tr);
+                if (tr.right > tr.left) {
+                    edge = rtl ? tr.right : tr.left;
+                    foundClock = true;
+                    break;
+                }
+            }
+        }
+        if (!foundClock) {
+            bool isWin11 = FindWindowExW(b.taskbar, nullptr, L"Windows.UI.Composition.DesktopWindowContentBridge", nullptr) != nullptr;
+            int reserve = isWin11 ? px(80) : px(8);
+            edge = rtl ? (bar.left + reserve) : (bar.right - reserve);
+        }
+    }
+
+    RECT wr{};
+    HWND wbSibling = FindWindowExW(b.taskbar, nullptr, L"WirelessBatteryWidget", nullptr);
+    if (wbSibling && IsWindowVisible(wbSibling)) {
+        GetWindowRect(wbSibling, &wr);
+        if (wr.right > wr.left && wr.top < bar.bottom && wr.bottom > bar.top) {
+            if (rtl) { if (wr.right > edge) edge = wr.right; }
+            else     { if (wr.left < edge) edge = wr.left; }
+        } else {
+            wr = {};
+        }
+    }
+
+    if (b.isPrimary && !rtl) {
+        for (const wchar_t* cls : { L"ShellFeedsTaskbarViewWindow", L"DynamicContent2" }) {
+            HWND feeds = FindWindowExW(b.taskbar, nullptr, cls, nullptr);
+            if (!feeds || !IsWindowVisible(feeds)) continue;
+            RECT fr{};
+            GetWindowRect(feeds, &fr);
+            if (fr.left < edge && fr.right > fr.left) edge = fr.left;
+        }
+    }
+
+    RECT wb = b.isPrimary ? WidgetsButtonRect(b.taskbar) : RECT{};
+    if (wb.right > wb.left && wb.top < bar.bottom && wb.bottom > bar.top &&
+        (rtl ? wb.left < edge + b.size.cx + px(2) && wb.right > edge : wb.right > edge - b.size.cx - px(2) && wb.left < edge)) {
+        edge = rtl ? wb.right : wb.left;
+    }
+
+    POINT p{ edge, bar.top };
+    ScreenToClient(b.taskbar, &p);
+    int left = p.x - b.size.cx - px(4);
+
+    if (b.isPrimary) {
+        DWORD customOffset = 0, sz = sizeof(customOffset);
+        if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\AdhanTaskbarMonitor", L"TaskbarOffset",
+                         RRF_RT_REG_DWORD, nullptr, &customOffset, &sz) == ERROR_SUCCESS) {
+            left -= px(static_cast<int>(customOffset));
+        }
+    }
+
+    if (b.rebar && IsWindow(b.rebar)) {
+        RECT rr{};
+        GetWindowRect(b.rebar, &rr);
+        POINT tl{ rtl ? rr.right : rr.left, rr.top };
+        ScreenToClient(b.taskbar, &tl);
+        if (tl.x + (rr.right - rr.left) > left && left > tl.x)
+            MoveWindow(b.rebar, tl.x, tl.y, left - tl.x, rr.bottom - rr.top, TRUE);
+    }
+
+    bool covered = GetWindow(b.wnd, GW_HWNDPREV) != nullptr;
+    if (!covered && EqualRect(&tr, &b.lastTray) && EqualRect(&bar, &b.lastBar) && EqualRect(&wb, &b.lastWidgets) &&
+        EqualRect(&wr, &b.lastBattery) && b.lastW == b.size.cx && b.lastLeft == left)
+        return true;
+
+    b.lastTray = tr;
+    b.lastWidgets = wb;
+    b.lastBattery = wr;
+    b.lastBar = bar;
+    b.lastW = b.size.cx;
+    b.lastLeft = left;
+    SetWindowPos(b.wnd, HWND_TOP, left, 0, b.size.cx, b.size.cy, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    return true;
 }
 
 LRESULT CALLBACK WidgetProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    auto* b = reinterpret_cast<BarInstance*>(GetWindowLongPtrW(h, GWLP_USERDATA));
     switch (msg) {
         case WM_MOUSEMOVE:
-            if (!g_hover) {
-                g_hover = true;
+            if (b && !b->hover) {
+                b->hover = true;
                 TRACKMOUSEEVENT t{ sizeof(t), TME_LEAVE, h, 0 };
                 TrackMouseEvent(&t);
-                Paint();
-                widget::Reposition();
+                PaintBar(*b);
+                RepositionBar(*b);
             }
             return 0;
         case WM_MOUSELEAVE:
-            g_hover = false;
-            Paint();
-            widget::Reposition();
+            if (b) {
+                b->hover = false;
+                PaintBar(*b);
+                RepositionBar(*b);
+            }
             return 0;
         case WM_LBUTTONUP:
-            if (g_tip) SendMessageW(g_tip, TTM_POP, 0, 0);
-            PostMessageW(g_notify, g_clickMsg, 0, 0);
+            if (b && b->tip) SendMessageW(b->tip, TTM_POP, 0, 0);
+            PostMessageW(g_notify, g_clickMsg, 0, reinterpret_cast<LPARAM>(h));
             return 0;
         case WM_RBUTTONUP:
-            if (g_tip) SendMessageW(g_tip, TTM_POP, 0, 0);
-            PostMessageW(g_notify, g_clickMsg, 1, 0);
+            if (b && b->tip) SendMessageW(b->tip, TTM_POP, 0, 0);
+            PostMessageW(g_notify, g_clickMsg, 1, reinterpret_cast<LPARAM>(h));
             return 0;
         case WM_MOUSEACTIVATE:
             return MA_NOACTIVATE;
     }
     return DefWindowProcW(h, msg, wp, lp);
+}
+
+void DestroyBar(BarInstance& b) {
+    if (b.rebar && IsWindow(b.rebar) && b.taskbar && IsWindow(b.taskbar)) {
+        RECT r{};
+        GetClientRect(b.taskbar, &r);
+        PostMessageW(b.taskbar, WM_SIZE, SIZE_RESTORED, MAKELPARAM(r.right, r.bottom));
+    }
+    b.rebar = nullptr;
+    if (b.tip) { DestroyWindow(b.tip); b.tip = nullptr; }
+    if (b.wnd) { DestroyWindow(b.wnd); b.wnd = nullptr; }
+}
+
+std::unique_ptr<BarInstance> CreateBar(HWND taskbar, bool isPrimary) {
+    if (!taskbar || !IsWindow(taskbar) || !IsWindowVisible(taskbar)) return nullptr;
+    RECT tb{};
+    GetWindowRect(taskbar, &tb);
+    if (tb.bottom - tb.top > tb.right - tb.left) return nullptr;
+    if (isPrimary && !FindWindowExW(taskbar, nullptr, L"TrayNotifyWnd", nullptr)) return nullptr;
+
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{ sizeof(wc) };
+        wc.lpfnWndProc = WidgetProc;
+        wc.hInstance = g_inst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.lpszClassName = kClass;
+        registered = RegisterClassExW(&wc) != 0;
+    }
+
+    auto b = std::make_unique<BarInstance>();
+    b->taskbar = taskbar;
+    b->isPrimary = isPrimary;
+    b->rebar = (isPrimary && !FindWindowExW(taskbar, nullptr, L"Windows.UI.Composition.DesktopWindowContentBridge", nullptr))
+                   ? FindWindowExW(taskbar, nullptr, L"ReBarWindow32", nullptr)
+                   : nullptr;
+
+    b->wnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE, kClass, L"", WS_CHILD | WS_CLIPSIBLINGS,
+                             0, 0, 1, 1, taskbar, nullptr, g_inst, nullptr);
+    if (!b->wnd) return nullptr;
+    SetWindowLongPtrW(b->wnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(b.get()));
+
+    INITCOMMONCONTROLSEX icc{ sizeof(icc), ICC_WIN95_CLASSES };
+    InitCommonControlsEx(&icc);
+    b->tip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+                             0, 0, 0, 0, g_notify, nullptr, g_inst, nullptr);
+    if (b->tip) {
+        ApplyTipTheme(b->tip);
+        TTTOOLINFOW ti{ sizeof(ti) };
+        ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+        ti.hwnd = g_notify;
+        ti.uId = reinterpret_cast<UINT_PTR>(b->wnd);
+        ti.lpszText = const_cast<wchar_t*>(g_tipText.empty() ? L"مواقيت الصلاة" : g_tipText.c_str());
+        SendMessageW(b->tip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&ti));
+        SendMessageW(b->tip, TTM_SETMAXTIPWIDTH, 0, 600);
+    }
+
+    if (isPrimary) WatchWidgetsButton(taskbar);
+    b->lastDpi = DpiFor(taskbar);
+    PaintBar(*b);
+    b->lastW = -1;
+    RepositionBar(*b);
+    ShowWindow(b->wnd, SW_SHOWNOACTIVATE);
+    return b;
+}
+
+struct EnumTaskbarsCtx {
+    std::vector<std::pair<HWND, bool>> list;
+};
+
+BOOL CALLBACK EnumSecondaryProc(HWND hwnd, LPARAM lp) {
+    auto* ctx = reinterpret_cast<EnumTaskbarsCtx*>(lp);
+    wchar_t cls[64]{};
+    if (GetClassNameW(hwnd, cls, 64) && wcscmp(cls, L"Shell_SecondaryTrayWnd") == 0 && IsWindowVisible(hwnd)) {
+        ctx->list.push_back({ hwnd, false });
+    }
+    return TRUE;
+}
+
+std::vector<std::pair<HWND, bool>> FindAllTaskbars() {
+    EnumTaskbarsCtx ctx;
+    HWND primary = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (primary && IsWindowVisible(primary)) {
+        ctx.list.push_back({ primary, true });
+    }
+    EnumWindows(EnumSecondaryProc, reinterpret_cast<LPARAM>(&ctx));
+    return ctx.list;
 }
 
 }  // namespace
@@ -319,77 +537,41 @@ namespace widget {
 
 bool Create(HINSTANCE inst, HWND notifyWnd, UINT clickMsg, bool lightTheme) {
     Destroy();
-    g_taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
-    if (!g_taskbar || !FindWindowExW(g_taskbar, nullptr, L"TrayNotifyWnd", nullptr)) { g_taskbar = nullptr; return false; }
-    RECT tb;
-    GetWindowRect(g_taskbar, &tb);
-    if (tb.bottom - tb.top > tb.right - tb.left) { g_taskbar = nullptr; return false; }
-    g_rebar = FindWindowExW(g_taskbar, nullptr, L"Windows.UI.Composition.DesktopWindowContentBridge", nullptr)
-                  ? nullptr
-                  : FindWindowExW(g_taskbar, nullptr, L"ReBarWindow32", nullptr);
+    g_inst = inst;
     g_notify = notifyWnd;
     g_clickMsg = clickMsg;
     g_light = lightTheme;
-
-    static bool registered = false;
-    if (!registered) {
-        WNDCLASSEXW wc{ sizeof(wc) };
-        wc.lpfnWndProc = WidgetProc;
-        wc.hInstance = inst;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        wc.lpszClassName = kClass;
-        registered = RegisterClassExW(&wc) != 0;
-    }
-    g_wnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE, kClass, L"", WS_CHILD | WS_CLIPSIBLINGS, 0, 0, 1, 1,
-                            g_taskbar, nullptr, inst, nullptr);
-    if (!g_wnd) { g_taskbar = nullptr; return false; }
-
-    INITCOMMONCONTROLSEX icc{ sizeof(icc), ICC_WIN95_CLASSES };
-    InitCommonControlsEx(&icc);
-    g_tip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0,
-                            notifyWnd, nullptr, inst, nullptr);
-    if (g_tip) {
-        ApplyTipTheme();
-        TTTOOLINFOW ti{ sizeof(ti) };
-        ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-        ti.hwnd = notifyWnd;
-        ti.uId = (UINT_PTR)g_wnd;
-        ti.lpszText = const_cast<wchar_t*>(L"مواقيت الصلاة");
-        SendMessageW(g_tip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
-        SendMessageW(g_tip, TTM_SETMAXTIPWIDTH, 0, 600);
-    }
-    WatchWidgetsButton(g_taskbar);
-    g_lastDpi = Dpi();
-    Paint();
-    g_lastW = -1;
-    Reposition();
-    ShowWindow(g_wnd, SW_SHOWNOACTIVATE);
-    return true;
+    return Reposition();
 }
 
 void Destroy() {
-    if (g_rebar && IsWindow(g_rebar) && g_taskbar && IsWindow(g_taskbar)) {
-        RECT r;
-        GetClientRect(g_taskbar, &r);
-        PostMessageW(g_taskbar, WM_SIZE, SIZE_RESTORED, MAKELPARAM(r.right, r.bottom));
-    }
-    g_rebar = nullptr;
     if (g_wbWake) WatchWidgetsButton(nullptr);
-    if (g_tip) { DestroyWindow(g_tip); g_tip = nullptr; }
-    if (g_wnd) { DestroyWindow(g_wnd); g_wnd = nullptr; }
-    g_taskbar = nullptr;
-    g_hover = false;
+    for (auto& b : g_bars) DestroyBar(*b);
+    g_bars.clear();
 }
 
-bool Alive() { return g_wnd && IsWindow(g_wnd) && g_taskbar && IsWindow(g_taskbar); }
+bool Alive() {
+    if (g_bars.empty()) return false;
+    for (const auto& b : g_bars) {
+        if (b->wnd && IsWindow(b->wnd) && b->taskbar && IsWindow(b->taskbar)) return true;
+    }
+    return false;
+}
 
-RECT ScreenRect() {
+RECT ScreenRect(HWND widgetWnd) {
     RECT r{};
-    if (Alive()) GetWindowRect(g_wnd, &r);
+    if (widgetWnd && IsWindow(widgetWnd)) {
+        GetWindowRect(widgetWnd, &r);
+        return r;
+    }
+    if (!g_bars.empty() && g_bars[0]->wnd && IsWindow(g_bars[0]->wnd)) {
+        GetWindowRect(g_bars[0]->wnd, &r);
+    }
     return r;
 }
 
-void SetDisplay(wchar_t iconGlyph, const std::wstring& label, const std::wstring& timeText, bool accent, int redBoxAlpha, const std::wstring& tooltip) {
+void SetDisplay(wchar_t iconGlyph, const std::wstring& label, const std::wstring& timeText,
+                bool accent, int redBoxAlpha, const std::wstring& tooltip) {
     bool visualChanged = (iconGlyph != g_iconGlyph || label != g_label || timeText != g_timeText ||
                           accent != g_accent || redBoxAlpha != g_redBoxAlpha);
     g_iconGlyph = iconGlyph;
@@ -397,105 +579,89 @@ void SetDisplay(wchar_t iconGlyph, const std::wstring& label, const std::wstring
     g_timeText = timeText;
     g_accent = accent;
     g_redBoxAlpha = redBoxAlpha;
-    if (tooltip != g_tipText && g_tip) {
+
+    if (tooltip != g_tipText) {
         g_tipText = tooltip;
-        TTTOOLINFOW ti{ sizeof(ti) };
-        ti.hwnd = g_notify;
-        ti.uId = (UINT_PTR)g_wnd;
-        ti.lpszText = const_cast<wchar_t*>(g_tipText.c_str());
-        SendMessageW(g_tip, TTM_UPDATETIPTEXTW, 0, (LPARAM)&ti);
+        for (auto& b : g_bars) {
+            if (!b->tip) continue;
+            TTTOOLINFOW ti{ sizeof(ti) };
+            ti.hwnd = g_notify;
+            ti.uId = reinterpret_cast<UINT_PTR>(b->wnd);
+            ti.lpszText = const_cast<wchar_t*>(g_tipText.c_str());
+            SendMessageW(b->tip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&ti));
+        }
     }
     if (visualChanged) {
-        Paint();
-        Reposition();
+        for (auto& b : g_bars) {
+            PaintBar(*b);
+            RepositionBar(*b);
+        }
     }
 }
 
 void SetLightTheme(bool light) {
     g_light = light;
-    ApplyTipTheme();
-    Paint();
+    for (auto& b : g_bars) {
+        ApplyTipTheme(b->tip);
+        PaintBar(*b);
+    }
 }
 
 void SetUpdateAvailable(bool on) {
     if (g_updateDot != on) {
         g_updateDot = on;
-        Paint();
+        for (auto& b : g_bars) PaintBar(*b);
     }
 }
 
 void SetBackground(bool on) {
     g_background = on;
-    Paint();
+    for (auto& b : g_bars) PaintBar(*b);
 }
 
 bool Reposition() {
-    if (!Alive()) return false;
-    if (Dpi() != g_lastDpi) { g_lastDpi = Dpi(); Paint(); }
-    HWND tray = FindWindowExW(g_taskbar, nullptr, L"TrayNotifyWnd", nullptr);
-    if (!tray) return true;
-    RECT tr, bar;
-    GetWindowRect(tray, &tr);
-    GetWindowRect(g_taskbar, &bar);
-    bool rtl = GetWindowLongW(g_taskbar, GWL_EXSTYLE) & WS_EX_LAYOUTRTL;
-    int edge = rtl ? tr.right : tr.left;
-    RECT wr{};
-    HWND wbSibling = FindWindowExW(g_taskbar, nullptr, L"WirelessBatteryWidget", nullptr);
-    if (wbSibling && IsWindowVisible(wbSibling)) {
-        GetWindowRect(wbSibling, &wr);
-        if (wr.right > wr.left && wr.top < bar.bottom && wr.bottom > bar.top) {
-            if (rtl) {
-                if (wr.right > edge) edge = wr.right;
-            } else {
-                if (wr.left < edge) edge = wr.left;
+    auto found = FindAllTaskbars();
+
+    // Remove bars whose taskbar disappeared or became invalid.
+    for (auto it = g_bars.begin(); it != g_bars.end();) {
+        bool keep = false;
+        for (const auto& f : found) {
+            if (f.first == (*it)->taskbar && f.second == (*it)->isPrimary) {
+                keep = true;
+                break;
             }
+        }
+        if (!keep || !(*it)->wnd || !IsWindow((*it)->wnd)) {
+            DestroyBar(**it);
+            it = g_bars.erase(it);
         } else {
-            wr = {};
+            ++it;
         }
     }
-    if (!rtl)
-        for (const wchar_t* cls : { L"ShellFeedsTaskbarViewWindow", L"DynamicContent2" }) {
-            HWND feeds = FindWindowExW(g_taskbar, nullptr, cls, nullptr);
-            if (!feeds || !IsWindowVisible(feeds)) continue;
-            RECT fr;
-            GetWindowRect(feeds, &fr);
-            if (fr.left < edge && fr.right > fr.left) edge = fr.left;
+
+    // Add bars for newly connected monitors/taskbars.
+    for (const auto& f : found) {
+        bool exists = false;
+        for (const auto& b : g_bars) {
+            if (b->taskbar == f.first) { exists = true; break; }
         }
-    RECT wb = WidgetsButtonRect();
-    if (wb.right > wb.left && wb.top < bar.bottom && wb.bottom > bar.top &&
-        (rtl ? wb.left < edge + g_size.cx + Px(2) && wb.right > edge : wb.right > edge - g_size.cx - Px(2) && wb.left < edge))
-        edge = rtl ? wb.right : wb.left;
-    POINT p{ edge, bar.top };
-    ScreenToClient(g_taskbar, &p);
-    int left = p.x - g_size.cx - Px(4);
-
-    DWORD customOffset = 0, sz = sizeof(customOffset);
-    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\AdhanTaskbarMonitor", L"TaskbarOffset",
-                     RRF_RT_REG_DWORD, nullptr, &customOffset, &sz) == ERROR_SUCCESS) {
-        left -= Px((int)customOffset);
+        if (!exists) {
+            auto nb = CreateBar(f.first, f.second);
+            if (nb) g_bars.push_back(std::move(nb));
+        }
     }
 
-    if (g_rebar && IsWindow(g_rebar)) {
-        RECT rr;
-        GetWindowRect(g_rebar, &rr);
-        POINT tl{ rtl ? rr.right : rr.left, rr.top };
-        ScreenToClient(g_taskbar, &tl);
-        if (tl.x + (rr.right - rr.left) > left && left > tl.x)
-            MoveWindow(g_rebar, tl.x, tl.y, left - tl.x, rr.bottom - rr.top, TRUE);
+    // Reposition all active bars.
+    for (auto it = g_bars.begin(); it != g_bars.end();) {
+        if (!RepositionBar(**it)) {
+            DestroyBar(**it);
+            it = g_bars.erase(it);
+        } else {
+            ++it;
+        }
     }
 
-    bool covered = GetWindow(g_wnd, GW_HWNDPREV) != nullptr;
-    if (!covered && EqualRect(&tr, &g_lastTray) && EqualRect(&bar, &g_lastBar) && EqualRect(&wb, &g_lastWidgets) &&
-        EqualRect(&wr, &g_lastBattery) && g_lastW == g_size.cx && g_lastLeft == left)
-        return true;
-    g_lastTray = tr;
-    g_lastWidgets = wb;
-    g_lastBattery = wr;
-    g_lastBar = bar;
-    g_lastW = g_size.cx;
-    g_lastLeft = left;
-    SetWindowPos(g_wnd, HWND_TOP, left, 0, g_size.cx, g_size.cy, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    return true;
+    return !g_bars.empty();
 }
 
 }  // namespace widget

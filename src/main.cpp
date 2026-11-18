@@ -256,7 +256,7 @@ LRESULT CALLBACK SchedulePopupProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(h, msg, wp, lp);
 }
 
-void ShowSchedulePopup() {
+void ShowSchedulePopup(HWND clickedWnd) {
     if (g_popup && IsWindow(g_popup)) {
         DestroyWindow(g_popup);
         g_popup = nullptr;
@@ -294,7 +294,7 @@ void ShowSchedulePopup() {
     int W = s(245);
     int H = s(68 + static_cast<int>(st->sched.rows.size()) * 28 + 12);
 
-    RECT wr = widget::ScreenRect();
+    RECT wr = widget::ScreenRect(clickedWnd);
     POINT anchor{ (wr.left + wr.right) / 2, wr.top };
     HMONITOR mon = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi{ sizeof(mi) };
@@ -379,7 +379,7 @@ void ShowMenu() {
             break;
         case ID_CHECK_UPDATES:
             updater::CheckAsync(g_hwnd, WM_UPDATE_RESULT, L"HxH-3mk/Adhan-Taskbar-Monitor",
-                                kSettingsKey, 1, 0, 0, 3, true);
+                                kSettingsKey, 1, 1, 0, 3, true);
             break;
         case ID_EDIT_LOCATION:
             g_dialogOpen = true;
@@ -451,7 +451,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_WIDGET_CLICK:
             if (wp == 1) ShowMenu();
-            else if (wp == 0) ShowSchedulePopup();
+            else if (wp == 0) ShowSchedulePopup(reinterpret_cast<HWND>(lp));
             return 0;
         case WM_UPDATE_RESULT:
             if (wp == 1) {
@@ -478,7 +478,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == TIMER_TICK) UpdateDisplay();
             else if (wp == TIMER_UPDATE_CHECK) {
                 updater::CheckAsync(g_hwnd, WM_UPDATE_RESULT, L"HxH-3mk/Adhan-Taskbar-Monitor",
-                                    kSettingsKey, 1, 0, 0, 3, false);
+                                    kSettingsKey, 1, 1, 0, 3, false);
             }
             return 0;
         case WM_POWERBROADCAST:
@@ -564,7 +564,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     SetTimer(g_hwnd, TIMER_TICK, 1000, nullptr);
     SetTimer(g_hwnd, TIMER_UPDATE_CHECK, 24 * 60 * 60 * 1000, nullptr);
     updater::CheckAsync(g_hwnd, WM_UPDATE_RESULT, L"HxH-3mk/Adhan-Taskbar-Monitor",
-                        kSettingsKey, 1, 0, 0, 3, false);
+                        kSettingsKey, 1, 1, 0, 3, false);
 
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) {
